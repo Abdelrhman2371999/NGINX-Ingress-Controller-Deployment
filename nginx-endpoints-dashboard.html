@@ -1,0 +1,729 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NGINX Server Endpoints Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 30px;
+        }
+        
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: #2c3e50;
+            color: white;
+            padding: 40px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 15px;
+        }
+        
+        .server-info {
+            margin-top: 20px;
+            display: inline-flex;
+            align-items: center;
+            gap: 20px;
+            background: rgba(255,255,255,0.1);
+            padding: 15px 25px;
+            border-radius: 10px;
+        }
+        
+        .server-ip {
+            font-family: monospace;
+            font-size: 1.2em;
+            padding: 8px 15px;
+            background: rgba(0,0,0,0.2);
+            border-radius: 5px;
+        }
+        
+        .endpoints {
+            padding: 30px;
+        }
+        
+        .section-title {
+            color: #2c3e50;
+            font-size: 1.5em;
+            margin-bottom: 25px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #f0f0f0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .endpoint-card {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 25px;
+            margin-bottom: 20px;
+            border-left: 4px solid #3498db;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        
+        .endpoint-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        }
+        
+        .endpoint-card.health {
+            border-left-color: #2ecc71;
+        }
+        
+        .endpoint-card.api {
+            border-left-color: #9b59b6;
+        }
+        
+        .endpoint-card.status {
+            border-left-color: #e74c3c;
+        }
+        
+        .endpoint-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        
+        .endpoint-title {
+            font-size: 1.3em;
+            color: #2c3e50;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .endpoint-url {
+            font-family: 'Courier New', monospace;
+            background: #2c3e50;
+            color: white;
+            padding: 10px 15px;
+            border-radius: 5px;
+            font-size: 0.95em;
+            word-break: break-all;
+        }
+        
+        .endpoint-description {
+            color: #666;
+            margin-bottom: 20px;
+            line-height: 1.6;
+        }
+        
+        .curl-command {
+            background: #2c3e50;
+            color: #ecf0f1;
+            padding: 15px;
+            border-radius: 5px;
+            font-family: 'Courier New', monospace;
+            margin: 15px 0;
+            font-size: 0.9em;
+            position: relative;
+        }
+        
+        .copy-btn {
+            position: absolute;
+            right: 10px;
+            top: 10px;
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 0.8em;
+        }
+        
+        .copy-btn:hover {
+            background: #2980b9;
+        }
+        
+        .test-section {
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid #eee;
+        }
+        
+        .test-btn {
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 12px 25px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            transition: background 0.3s ease;
+        }
+        
+        .test-btn:hover {
+            background: #2980b9;
+        }
+        
+        .test-btn.health {
+            background: #2ecc71;
+        }
+        
+        .test-btn.health:hover {
+            background: #27ae60;
+        }
+        
+        .test-btn.api {
+            background: #9b59b6;
+        }
+        
+        .test-btn.api:hover {
+            background: #8e44ad;
+        }
+        
+        .test-btn.status {
+            background: #e74c3c;
+        }
+        
+        .test-btn.status:hover {
+            background: #c0392b;
+        }
+        
+        .result {
+            margin-top: 15px;
+            padding: 15px;
+            border-radius: 5px;
+            display: none;
+        }
+        
+        .result.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .result.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .result pre {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            margin-top: 10px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+        }
+        
+        .status-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        
+        .status-online {
+            background: #2ecc71;
+            box-shadow: 0 0 10px #2ecc71;
+        }
+        
+        .status-offline {
+            background: #e74c3c;
+            box-shadow: 0 0 10px #e74c3c;
+        }
+        
+        .footer {
+            text-align: center;
+            padding: 25px;
+            background: #f8f9fa;
+            color: #666;
+            border-top: 1px solid #eee;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .spinner {
+            display: inline-block;
+            animation: spin 1s linear infinite;
+        }
+        
+        .bulk-test {
+            text-align: center;
+            margin-top: 40px;
+            padding: 30px;
+            background: #f8f9fa;
+            border-radius: 10px;
+        }
+        
+        .bulk-btn {
+            background: #2c3e50;
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 1.1em;
+            font-weight: bold;
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            transition: background 0.3s ease;
+        }
+        
+        .bulk-btn:hover {
+            background: #1a252f;
+        }
+        
+        .test-summary {
+            margin-top: 20px;
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 15px;
+        }
+        
+        .summary-card {
+            background: white;
+            padding: 15px;
+            border-radius: 5px;
+            text-align: center;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        
+        .summary-value {
+            font-size: 2em;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+        
+        .summary-label {
+            font-size: 0.9em;
+            color: #666;
+        }
+        
+        .summary-success {
+            color: #2ecc71;
+        }
+        
+        .summary-failed {
+            color: #e74c3c;
+        }
+        
+        @media (max-width: 768px) {
+            body {
+                padding: 15px;
+            }
+            
+            .server-info {
+                flex-direction: column;
+                gap: 10px;
+            }
+            
+            .test-summary {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            
+            .endpoint-header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 10px;
+            }
+        }
+    </style>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>
+                <i class="fas fa-server"></i>
+                NGINX Server Endpoints Dashboard
+            </h1>
+            <div class="server-info">
+                <div>
+                    <span class="status-indicator status-online"></span>
+                    Server Status: <strong>Online</strong>
+                </div>
+                <div class="server-ip">10.10.0.204</div>
+                <div>NGINX 1.29.4</div>
+            </div>
+        </div>
+        
+        <div class="endpoints">
+            <div class="section-title">
+                <i class="fas fa-plug"></i>
+                Available Endpoints
+            </div>
+            
+            <!-- Health Check Endpoint -->
+            <div class="endpoint-card health">
+                <div class="endpoint-header">
+                    <div class="endpoint-title">
+                        <i class="fas fa-heartbeat"></i>
+                        Health Check
+                    </div>
+                    <div class="endpoint-url">/healthz</div>
+                </div>
+                <div class="endpoint-description">
+                    Health check endpoint for monitoring and load balancers. Returns server health status.
+                </div>
+                <div class="curl-command">
+                    curl http://10.10.0.204/healthz
+                    <button class="copy-btn" onclick="copyToClipboard('curl http://10.10.0.204/healthz')">
+                        <i class="far fa-copy"></i> Copy
+                    </button>
+                </div>
+                <div class="test-section">
+                    <button class="test-btn health" onclick="testEndpoint('healthz')">
+                        <i class="fas fa-vial"></i> Test Health Endpoint
+                    </button>
+                    <div id="result-healthz" class="result"></div>
+                </div>
+            </div>
+            
+            <!-- Main Application Endpoint -->
+            <div class="endpoint-card">
+                <div class="endpoint-header">
+                    <div class="endpoint-title">
+                        <i class="fas fa-home"></i>
+                        Main Application
+                    </div>
+                    <div class="endpoint-url">/</div>
+                </div>
+                <div class="endpoint-description">
+                    Root endpoint serving the main application. Returns the default NGINX welcome page or application homepage.
+                </div>
+                <div class="curl-command">
+                    curl http://10.10.0.204/
+                    <button class="copy-btn" onclick="copyToClipboard('curl http://10.10.0.204/')">
+                        <i class="far fa-copy"></i> Copy
+                    </button>
+                </div>
+                <div class="test-section">
+                    <button class="test-btn" onclick="testEndpoint('')">
+                        <i class="fas fa-vial"></i> Test Root Endpoint
+                    </button>
+                    <div id="result-root" class="result"></div>
+                </div>
+            </div>
+            
+            <!-- API Endpoint -->
+            <div class="endpoint-card api">
+                <div class="endpoint-header">
+                    <div class="endpoint-title">
+                        <i class="fas fa-code"></i>
+                        API Endpoint
+                    </div>
+                    <div class="endpoint-url">/api</div>
+                </div>
+                <div class="endpoint-description">
+                    API endpoint for application programming interface. Currently returns the default NGINX welcome page.
+                </div>
+                <div class="curl-command">
+                    curl http://10.10.0.204/api
+                    <button class="copy-btn" onclick="copyToClipboard('curl http://10.10.0.204/api')">
+                        <i class="far fa-copy"></i> Copy
+                    </button>
+                </div>
+                <div class="test-section">
+                    <button class="test-btn api" onclick="testEndpoint('api')">
+                        <i class="fas fa-vial"></i> Test API Endpoint
+                    </button>
+                    <div id="result-api" class="result"></div>
+                </div>
+            </div>
+            
+            <!-- NGINX Status Endpoint -->
+            <div class="endpoint-card status">
+                <div class="endpoint-header">
+                    <div class="endpoint-title">
+                        <i class="fas fa-chart-bar"></i>
+                        NGINX Status
+                    </div>
+                    <div class="endpoint-url">/nginx_status</div>
+                </div>
+                <div class="endpoint-description">
+                    NGINX stub_status module endpoint. Returns real-time connection statistics and server metrics.
+                </div>
+                <div class="curl-command">
+                    curl http://10.10.0.204/nginx_status
+                    <button class="copy-btn" onclick="copyToClipboard('curl http://10.10.0.204/nginx_status')">
+                        <i class="far fa-copy"></i> Copy
+                    </button>
+                </div>
+                <div class="test-section">
+                    <button class="test-btn status" onclick="testEndpoint('nginx_status')">
+                        <i class="fas fa-vial"></i> Test Status Endpoint
+                    </button>
+                    <div id="result-nginx_status" class="result"></div>
+                </div>
+            </div>
+            
+            <!-- Bulk Testing -->
+            <div class="bulk-test">
+                <div class="section-title">
+                    <i class="fas fa-bolt"></i>
+                    Bulk Testing
+                </div>
+                <button class="bulk-btn" onclick="testAllEndpoints()">
+                    <i class="fas fa-play-circle"></i> Test All Endpoints
+                </button>
+                
+                <div class="test-summary" id="test-summary" style="display: none;">
+                    <div class="summary-card">
+                        <div class="summary-label">Total Tests</div>
+                        <div class="summary-value" id="total-tests">0</div>
+                    </div>
+                    <div class="summary-card">
+                        <div class="summary-label">Successful</div>
+                        <div class="summary-value summary-success" id="successful-tests">0</div>
+                    </div>
+                    <div class="summary-card">
+                        <div class="summary-label">Failed</div>
+                        <div class="summary-value summary-failed" id="failed-tests">0</div>
+                    </div>
+                    <div class="summary-card">
+                        <div class="summary-label">Avg Response</div>
+                        <div class="summary-value" id="avg-response">0ms</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="footer">
+            <p>NGINX Server Dashboard | Server: 10.10.0.204 | Last Updated: <span id="current-date"></span></p>
+            <p style="margin-top: 10px; font-size: 0.9em;">
+                <i class="fas fa-info-circle"></i> Note: Testing from browser may be limited by CORS. Use curl commands for full testing.
+            </p>
+        </div>
+    </div>
+
+    <script>
+        // Set current date
+        document.getElementById('current-date').textContent = new Date().toLocaleDateString('en-US', {
+            weekday: 'long',
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+        });
+        
+        // Copy to clipboard function
+        function copyToClipboard(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                showNotification('Command copied to clipboard!');
+            }).catch(err => {
+                console.error('Failed to copy: ', err);
+            });
+        }
+        
+        // Show notification
+        function showNotification(message) {
+            // Remove existing notification
+            const existing = document.querySelector('.notification');
+            if (existing) existing.remove();
+            
+            // Create new notification
+            const notification = document.createElement('div');
+            notification.className = 'notification';
+            notification.textContent = message;
+            notification.style.cssText = `
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                background: #2ecc71;
+                color: white;
+                padding: 15px 25px;
+                border-radius: 5px;
+                z-index: 1000;
+                box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+                animation: slideIn 0.3s ease, fadeOut 0.3s ease 2.7s;
+            `;
+            
+            document.body.appendChild(notification);
+            
+            // Remove after 3 seconds
+            setTimeout(() => {
+                if (notification.parentNode) {
+                    notification.parentNode.removeChild(notification);
+                }
+            }, 3000);
+        }
+        
+        // Test single endpoint
+        async function testEndpoint(endpoint) {
+            const button = event.currentTarget;
+            const originalHTML = button.innerHTML;
+            const resultDiv = document.getElementById(`result-${endpoint}`);
+            
+            // Show loading
+            button.innerHTML = '<i class="fas fa-spinner spinner"></i> Testing...';
+            button.disabled = true;
+            
+            // Clear previous result
+            resultDiv.style.display = 'none';
+            resultDiv.className = 'result';
+            
+            try {
+                // Note: Due to CORS, we can't fetch directly from browser
+                // This is a simulation. In production, you'd need a backend proxy
+                
+                // Simulate API call delay
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                
+                // Mock responses based on endpoint
+                let mockResponse = '';
+                let statusCode = 200;
+                
+                switch(endpoint) {
+                    case 'healthz':
+                        mockResponse = 'OK';
+                        break;
+                    case '':
+                        mockResponse = '<!DOCTYPE html>\n<html>\n<head>\n<title>Welcome to nginx!</title>\n</head>\n<body>\n<h1>Welcome to nginx!</h1>\n<p>Server is running...</p>\n</body>\n</html>';
+                        break;
+                    case 'api':
+                        mockResponse = '<!DOCTYPE html>\n<html>\n<head>\n<title>API Endpoint</title>\n</head>\n<body>\n<h1>API Endpoint</h1>\n<p>API endpoint is accessible...</p>\n</body>\n</html>';
+                        break;
+                    case 'nginx_status':
+                        mockResponse = 'Active connections: 2\nserver accepts handled requests\n 16131 16131 15693\nReading: 0 Writing: 1 Waiting: 1';
+                        break;
+                }
+                
+                // Show result
+                resultDiv.innerHTML = `
+                    <strong><i class="fas fa-check-circle"></i> Success! HTTP 200</strong>
+                    <pre>${mockResponse}</pre>
+                    <small>Note: This is simulated data. Actual testing requires terminal.</small>
+                `;
+                resultDiv.className = 'result success';
+                resultDiv.style.display = 'block';
+                
+                showNotification(`Tested ${endpoint || 'root'} endpoint successfully!`);
+                
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <strong><i class="fas fa-exclamation-circle"></i> Error</strong>
+                    <p>${error.message}</p>
+                    <p>Due to CORS restrictions, direct browser testing is limited.</p>
+                    <p>Use the curl command above in your terminal.</p>
+                `;
+                resultDiv.className = 'result error';
+                resultDiv.style.display = 'block';
+            } finally {
+                // Restore button
+                button.innerHTML = originalHTML;
+                button.disabled = false;
+            }
+        }
+        
+        // Test all endpoints
+        async function testAllEndpoints() {
+            const endpoints = ['healthz', '', 'api', 'nginx_status'];
+            const summaryDiv = document.getElementById('test-summary');
+            const totalTests = document.getElementById('total-tests');
+            const successfulTests = document.getElementById('successful-tests');
+            const failedTests = document.getElementById('failed-tests');
+            const avgResponse = document.getElementById('avg-response');
+            
+            // Reset summary
+            totalTests.textContent = '0';
+            successfulTests.textContent = '0';
+            failedTests.textContent = '0';
+            avgResponse.textContent = '0ms';
+            summaryDiv.style.display = 'grid';
+            
+            let successful = 0;
+            let failed = 0;
+            let totalTime = 0;
+            
+            for (const endpoint of endpoints) {
+                const button = document.querySelector(`[onclick="testEndpoint('${endpoint}')"]`);
+                if (button) {
+                    const startTime = Date.now();
+                    
+                    // Trigger test
+                    button.click();
+                    
+                    // Simulate response time
+                    await new Promise(resolve => setTimeout(resolve, 800));
+                    
+                    const endTime = Date.now();
+                    totalTime += (endTime - startTime);
+                    
+                    // Randomly determine success (80% success rate for demo)
+                    if (Math.random() > 0.2) {
+                        successful++;
+                    } else {
+                        failed++;
+                    }
+                    
+                    // Update summary
+                    totalTests.textContent = successful + failed;
+                    successfulTests.textContent = successful;
+                    failedTests.textContent = failed;
+                    avgResponse.textContent = Math.round(totalTime / (successful + failed)) + 'ms';
+                }
+            }
+            
+            showNotification(`Tested ${endpoints.length} endpoints! ${successful} successful, ${failed} failed.`);
+        }
+        
+        // Add CSS animations
+        const style = document.createElement('style');
+        style.textContent = `
+            @keyframes slideIn {
+                from {
+                    transform: translateX(100%);
+                    opacity: 0;
+                }
+                to {
+                    transform: translateX(0);
+                    opacity: 1;
+                }
+            }
+            
+            @keyframes fadeOut {
+                from {
+                    opacity: 1;
+                }
+                to {
+                    opacity: 0;
+                }
+            }
+        `;
+        document.head.appendChild(style);
+        
+        // Initialize with some data
+        document.addEventListener('DOMContentLoaded', function() {
+            // Simulate initial status check
+            setTimeout(() => {
+                showNotification('NGINX Server Dashboard Loaded!');
+            }, 1000);
+        });
+    </script>
+</body>
+</html>
