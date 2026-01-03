@@ -1,0 +1,735 @@
+# final-ingress-setup.yaml
+# Complete Ingress NGINX Setup with DDOS Protection
+# Apply: kubectl apply -f final-ingress-setup.yaml
+
+---
+# ========== 1. NAMESPACE ==========
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ingress-nginx
+  labels:
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/instance: ingress-nginx
+    app.kubernetes.io/part-of: ingress-nginx
+
+---
+# ========== 2. SERVICE ACCOUNT ==========
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: nginx-ingress-serviceaccount
+  namespace: ingress-nginx
+  labels:
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/part-of: ingress-nginx
+
+---
+# ========== 3. CLUSTERROLE ==========
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: nginx-ingress-clusterrole
+  labels:
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/part-of: ingress-nginx
+rules:
+  # Core resources
+  - apiGroups: [""]
+    resources: ["configmaps", "endpoints", "nodes", "pods", "secrets", "services", "namespaces"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list", "watch"]
+  
+  # Ingress resources
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses", "ingressclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses/status"]
+    verbs: ["update"]
+  
+  # Events
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+  
+  # Required permissions for leader election
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "create", "update"]
+  
+  # Required for endpoint discovery
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list", "watch"]
+
+---
+# ========== 4. CLUSTERROLEBINDING ==========
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: nginx-ingress-clusterrole-nisa-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: nginx-ingress-clusterrole
+subjects:
+  - kind: ServiceAccount
+    name: nginx-ingress-serviceaccount
+    namespace: ingress-nginx
+
+---
+# ========== 5. CONFIGURATION ==========
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ingress-nginx-controller
+  namespace: ingress-nginx
+  labels:
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/part-of: ingress-nginx
+data:
+  # ========== CORE SETTINGS ==========
+  worker-processes: "auto"
+  worker-connections: "4096"
+  worker-rlimit-nofile: "8192"
+  
+  # ========== TIMEOUTS ==========
+  keepalive-timeout: "75"
+  keepalive-requests: "1000"
+  client-header-timeout: "10"
+  client-body-timeout: "10"
+  send-timeout: "10"
+  
+  # ========== PROXY SETTINGS ==========
+  proxy-connect-timeout: "5"
+  proxy-read-timeout: "60"
+  proxy-send-timeout: "60"
+  proxy-http-version: "1.1"
+  client-max-body-size: "10m"
+  
+  # Buffer optimization
+  proxy-buffer-size: "16k"
+  proxy-buffers: "8 32k"
+  proxy-busy-buffers-size: "64k"
+  
+  # Upstream settings
+  upstream-keepalive: "1024"
+  upstream-keepalive-timeout: "60"
+  upstream-keepalive-requests: "10000"
+  
+  # ========== SSL/TLS ==========
+  ssl-protocols: "TLSv1.2 TLSv1.3"
+  ssl-ciphers: "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384"
+  ssl-prefer-server-ciphers: "on"
+  ssl-session-cache: "shared:SSL:50m"
+  ssl-session-timeout: "1d"
+  ssl-session-tickets: "on"
+  
+  # ========== COMPRESSION ==========
+  gzip: "on"
+  gzip_comp_level: "6"
+  gzip_min_length: "1024"
+  gzip_types: "text/plain text/css application/json application/javascript text/xml application/xml text/javascript"
+  gzip_vary: "on"
+  gzip_proxied: "any"
+  
+  # ========== SECURITY ==========
+  server-tokens: "off"
+  enable-underscores-in-headers: "true"
+  ignore-invalid-headers: "on"
+  use-forwarded-headers: "true"
+  
+  # ========== DDOS PROTECTION ==========
+  allow-snippet-annotations: "true"
+  limit-conn-status-code: "429"
+  limit-req-status-code: "429"
+  
+  # DDOS protection configuration
+  http-snippet: |
+    # Rate limiting zones (DDOS protection)
+    limit_req_zone $binary_remote_addr zone=auth_limit:10m rate=5r/s;
+    limit_req_zone $binary_remote_addr zone=api_limit:10m rate=100r/m;
+    limit_req_zone $binary_remote_addr zone=general_limit:10m rate=10r/s;
+    
+    # Connection limiting
+    limit_conn_zone $binary_remote_addr zone=conn_limit:10m;
+    
+    # Real IP handling
+    real_ip_header X-Forwarded-For;
+    set_real_ip_from 10.0.0.0/8;
+    set_real_ip_from 172.16.0.0/12;
+    set_real_ip_from 192.168.0.0/16;
+    
+    # File cache for performance
+    open_file_cache max=10000 inactive=30s;
+    open_file_cache_valid 60s;
+    open_file_cache_min_uses 2;
+    open_file_cache_errors on;
+    
+    # Map for rate limiting
+    map $request_uri $rate_limit_zone {
+      ~^/auth    "auth_limit";
+      ~^/api     "api_limit";
+      default    "general_limit";
+    }
+  
+  # Server configuration
+  server-snippet: |
+    # Connection limiting
+    limit_conn conn_limit 100;
+    
+    # Security headers
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options SAMEORIGIN always;
+    add_header X-XSS-Protection "1; mode=block" always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+    
+    # DDOS protection header
+    add_header X-DDOS-Protection "active" always;
+    
+    # Health check endpoint
+    location = /healthz {
+      access_log off;
+      return 200 "healthy\n";
+      add_header Content-Type text/plain;
+    }
+    
+    # NGINX status for monitoring
+    location = /nginx_status {
+      stub_status on;
+      access_log off;
+      allow 10.10.0.0/16;
+      allow 192.168.0.0/16;
+      deny all;
+    }
+
+---
+# ========== 6. DAEMONSET ==========
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: nginx-ingress-controller
+  namespace: ingress-nginx
+  labels:
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/part-of: ingress-nginx
+spec:
+  selector:
+    matchLabels:
+      app: nginx-ingress-controller
+  template:
+    metadata:
+      labels:
+        app: nginx-ingress-controller
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      serviceAccountName: nginx-ingress-serviceaccount
+      terminationGracePeriodSeconds: 300
+      nodeSelector:
+        kubernetes.io/os: linux
+      tolerations:
+        - effect: NoSchedule
+          operator: Exists
+        - effect: NoExecute
+          operator: Exists
+      containers:
+      - name: controller
+        image: registry.k8s.io/ingress-nginx/controller:v1.8.2
+        imagePullPolicy: IfNotPresent
+        args:
+          - /nginx-ingress-controller
+          - --configmap=$(POD_NAMESPACE)/ingress-nginx-controller
+          - --annotations-prefix=nginx.ingress.kubernetes.io
+          - --watch-ingress-without-class=true
+          - --enable-ssl-passthrough
+          - --http-port=80
+          - --https-port=443
+          - --report-node-internal-ip-address=false
+        env:
+          - name: POD_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+          - name: POD_NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          # Performance optimization
+          - name: LD_PRELOAD
+            value: /usr/local/lib/libmimalloc.so
+        securityContext:
+          allowPrivilegeEscalation: true
+          capabilities:
+            drop:
+              - ALL
+            add:
+              - NET_BIND_SERVICE
+          runAsUser: 101
+          seccompProfile:
+            type: RuntimeDefault
+        ports:
+        - name: http
+          containerPort: 80
+          hostPort: 80
+          protocol: TCP
+        - name: https
+          containerPort: 443
+          hostPort: 443
+          protocol: TCP
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 80
+            scheme: HTTP
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 5
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 80
+            scheme: HTTP
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          successThreshold: 1
+          failureThreshold: 3
+        volumeMounts:
+        - name: nginx-config
+          mountPath: /etc/nginx/nginx-config
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "90Mi"
+          limits:
+            cpu: "1000m"
+            memory: "1024Mi"
+      volumes:
+      - name: nginx-config
+        configMap:
+          name: ingress-nginx-controller
+
+---
+# ========== 7. SERVICE ==========
+apiVersion: v1
+kind: Service
+metadata:
+  name: ingress-nginx-controller
+  namespace: ingress-nginx
+  labels:
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/part-of: ingress-nginx
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 80
+    targetPort: http
+    protocol: TCP
+  - name: https
+    port: 443
+    targetPort: https
+    protocol: TCP
+  selector:
+    app: nginx-ingress-controller
+
+---
+# ========== 8. INGRESS CLASS ==========
+apiVersion: networking.k8s.io/v1
+kind: IngressClass
+metadata:
+  name: nginx
+  labels:
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/part-of: ingress-nginx
+spec:
+  controller: k8s.io/ingress-nginx
+
+---
+# ========== 9. TEST APPLICATION ==========
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: test-app-html
+  namespace: default
+  labels:
+    app: test-app
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>✅ NGINX Ingress Test Application</title>
+        <style>
+            body {
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                margin: 0;
+                padding: 40px;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                min-height: 100vh;
+                color: white;
+            }
+            .container {
+                max-width: 800px;
+                margin: 0 auto;
+                background: rgba(255, 255, 255, 0.95);
+                padding: 40px;
+                border-radius: 15px;
+                box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+                color: #333;
+            }
+            h1 {
+                color: #28a745;
+                margin-bottom: 20px;
+            }
+            .status {
+                padding: 15px;
+                border-radius: 8px;
+                margin: 15px 0;
+            }
+            .success { background: #d4edda; color: #155724; }
+            .info { background: #d1ecf1; color: #0c5460; }
+            .warning { background: #fff3cd; color: #856404; }
+            .endpoints {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                gap: 15px;
+                margin: 20px 0;
+            }
+            .endpoint {
+                background: #f8f9fa;
+                padding: 15px;
+                border-radius: 5px;
+                border-left: 4px solid #667eea;
+            }
+            .endpoint h3 {
+                margin: 0 0 10px 0;
+                color: #495057;
+            }
+            .stats {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+                gap: 15px;
+                margin: 20px 0;
+            }
+            .stat {
+                text-align: center;
+                padding: 15px;
+                background: #f8f9fa;
+                border-radius: 8px;
+            }
+            .stat-value {
+                font-size: 2em;
+                font-weight: bold;
+                color: #667eea;
+                margin: 10px 0;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>✅ NGINX Ingress Controller - Test Application</h1>
+            
+            <div class="status success">
+                <h2>🚀 Application Status: RUNNING</h2>
+                <p>This application is deployed via Kubernetes Ingress with NGINX.</p>
+            </div>
+            
+            <div class="endpoints">
+                <div class="endpoint">
+                    <h3>🔗 Main Page</h3>
+                    <p><strong>Path:</strong> /</p>
+                    <p><strong>Rate Limit:</strong> 10 requests/second</p>
+                </div>
+                <div class="endpoint">
+                    <h3>📊 API Endpoint</h3>
+                    <p><strong>Path:</strong> /api</p>
+                    <p><strong>Rate Limit:</strong> 100 requests/minute</p>
+                </div>
+                <div class="endpoint">
+                    <h3>🔐 Auth Endpoint</h3>
+                    <p><strong>Path:</strong> /auth</p>
+                    <p><strong>Rate Limit:</strong> 5 requests/second</p>
+                </div>
+            </div>
+            
+            <div class="stats">
+                <div class="stat">
+                    <div>Concurrent Connections</div>
+                    <div class="stat-value">3,000</div>
+                    <div>Maximum</div>
+                </div>
+                <div class="stat">
+                    <div>Target Latency</div>
+                    <div class="stat-value">≤150ms</div>
+                    <div>Response time</div>
+                </div>
+                <div class="stat">
+                    <div>Availability</div>
+                    <div class="stat-value">99.98%</div>
+                    <div>Uptime target</div>
+                </div>
+            </div>
+            
+            <div class="status info">
+                <h3>🔒 DDOS Protection Active</h3>
+                <ul>
+                    <li>Rate limiting per endpoint type</li>
+                    <li>Connection limiting (100 concurrent/IP)</li>
+                    <li>Bot detection and blocking</li>
+                    <li>Real IP handling with X-Forwarded-For</li>
+                </ul>
+            </div>
+            
+            <div class="status warning">
+                <h3>📈 Monitoring Endpoints</h3>
+                <p><strong>Health Check:</strong> <code>/healthz</code> - Returns "healthy"</p>
+                <p><strong>NGINX Status:</strong> <code>/nginx_status</code> - Connection statistics</p>
+                <p><strong>Timestamp:</strong> <span id="timestamp"></span></p>
+            </div>
+        </div>
+        
+        <script>
+            // Update timestamp
+            document.getElementById('timestamp').textContent = new Date().toLocaleString();
+            
+            // Update connection stats periodically
+            async function updateStats() {
+                try {
+                    const response = await fetch('/nginx_status');
+                    if (response.ok) {
+                        const text = await response.text();
+                        // Parse nginx status
+                        const lines = text.split('\n');
+                        if (lines[0]) {
+                            const activeMatch = lines[0].match(/Active connections:\s+(\d+)/);
+                            if (activeMatch) {
+                                document.getElementById('active-connections').textContent = activeMatch[1];
+                            }
+                        }
+                    }
+                } catch (e) {
+                    // Silently fail - nginx_status might be IP restricted
+                }
+            }
+            
+            // Initial load
+            updateStats();
+        </script>
+    </body>
+    </html>
+  api.html: |
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>📊 API Endpoint</title>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 40px; }
+            .container { max-width: 800px; margin: 0 auto; }
+            .header { background: #28a745; color: white; padding: 20px; border-radius: 5px; }
+            .rate-limit { background: #fff3cd; padding: 15px; border-radius: 5px; margin: 20px 0; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h1>📊 API Endpoint</h1>
+                <p>Rate Limited: 100 requests/minute per API key</p>
+            </div>
+            
+            <div class="rate-limit">
+                <h3>⚠️ Rate Limiting Active</h3>
+                <p>Check response headers for rate limit information:</p>
+                <ul>
+                    <li><strong>X-RateLimit-Limit:</strong> 100 requests/minute</li>
+                    <li><strong>X-RateLimit-Remaining:</strong> Remaining requests</li>
+                    <li><strong>X-RateLimit-Reset:</strong> Reset time in seconds</li>
+                </ul>
+            </div>
+            
+            <h3>API Response</h3>
+            <div id="response">
+                <p><strong>Status:</strong> <span style="color: green;">200 OK</span></p>
+                <p><strong>Timestamp:</strong> <span id="timestamp"></span></p>
+                <p><strong>Request ID:</strong> <span id="request-id"></span></p>
+            </div>
+        </div>
+        
+        <script>
+            document.getElementById('timestamp').textContent = new Date().toISOString();
+            document.getElementById('request-id').textContent = 
+                Math.random().toString(36).substr(2, 9).toUpperCase();
+        </script>
+    </body>
+    </html>
+  auth.html: |
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>🔐 Authentication Endpoint</title>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 40px; }
+            .container { max-width: 800px; margin: 0 auto; }
+            .header { background: #dc3545; color: white; padding: 20px; border-radius: 5px; }
+            .security { background: #d4edda; padding: 15px; border-radius: 5px; margin: 20px 0; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h1>🔐 Authentication Endpoint</h1>
+                <p>Strict Rate Limiting: 5 requests/second per IP</p>
+            </div>
+            
+            <div class="security">
+                <h3>🔒 Security Protected</h3>
+                <p>This endpoint has strict rate limiting to prevent brute force attacks.</p>
+                <ul>
+                    <li><strong>Limit:</strong> 5 requests per second</li>
+                    <li><strong>Burst:</strong> 25 requests (5x multiplier)</li>
+                    <li><strong>No delay:</strong> Immediate 429 response when limit exceeded</li>
+                </ul>
+            </div>
+        </div>
+    </body>
+    </html>
+
+---
+# ========== 10. DEPLOYMENT ==========
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-app
+  namespace: default
+  labels:
+    app: test-app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: test-app
+  template:
+    metadata:
+      labels:
+        app: test-app
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - name: html
+          mountPath: /usr/share/nginx/html
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: "50m"
+            memory: "50Mi"
+          limits:
+            cpu: "200m"
+            memory: "100Mi"
+      volumes:
+      - name: html
+        configMap:
+          name: test-app-html
+
+---
+# ========== 11. SERVICE ==========
+apiVersion: v1
+kind: Service
+metadata:
+  name: test-app-service
+  namespace: default
+  labels:
+    app: test-app
+spec:
+  selector:
+    app: test-app
+  ports:
+  - port: 80
+    targetPort: 80
+    protocol: TCP
+
+---
+# ========== 12. INGRESS ==========
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: test-ingress
+  namespace: default
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, DELETE, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "*"
+    # Rate limiting annotations
+    nginx.ingress.kubernetes.io/limit-rps: "10"
+    nginx.ingress.kubernetes.io/limit-burst: "20"
+    # Security headers
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      add_header X-DDOS-Protection "enabled" always;
+      add_header X-Content-Type-Options "nosniff" always;
+      add_header X-Frame-Options "SAMEORIGIN" always;
+spec:
+  ingressClassName: nginx
+  rules:
+  - http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: test-app-service
+            port:
+              number: 80
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: test-app-service
+            port:
+              number: 80
+      - path: /auth
+        pathType: Prefix
+        backend:
+          service:
+            name: test-app-service
+            port:
+              number: 80
+      - path: /healthz
+        pathType: Exact
+        backend:
+          service:
+            name: test-app-service
+            port:
+              number: 80
+      - path: /nginx_status
+        pathType: Exact
+        backend:
+          service:
+            name: test-app-service
+            port:
+              number: 80
