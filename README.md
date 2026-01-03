@@ -1,4 +1,3 @@
----
 
 # NGINX Ingress Controller Deployment
 
@@ -7,7 +6,6 @@ A **complete, production-ready NGINX Ingress Controller deployment for Kubernete
 Maintained by **Abdelrhman H. Musaa**
 Version **1.0.0** — *Last Updated: January 2026*
 
----
 
 ## 📋 Overview
 
